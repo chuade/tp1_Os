@@ -53,11 +53,19 @@ static struct task_struct *my_thread2;
 
 // liste des taches pretes a etre executes
 LIST_HEAD(ready_queue_tasks);
-// on commence avec trois threads
+// semaphore pour gerer la l,ajout d'une tache dans le ready queue par le scheduler
+// long-term et la lecture et la suppression de la tache
+// dans le ready queue par le scheduler-short-term 
 #define BUFFER_SIZE 3
 struct semaphore mutex =__SEMAPHORE_INITIALIZER(mutex,1); 
 struct semaphore full = __SEMAPHORE_INITIALIZER(full,0);
 struct semaphore empty = __SEMAPHORE_INITIALIZER(empty,BUFFER_SIZE);
+
+// semaphore pour gerer plusieurs producteurs qui veulent
+// ajouter une tache dans le reay queue. Ceci c'est dans le cas
+// ou on a plus de 100000 taches
+struct semaphore semaphore_task = __SEMAPHORE_INITIALIZER(semaphore_task,0);
+
 
 //Tableau contenant toute les tâches,
 //initialisées pseudo-aléatoirement.
@@ -131,8 +139,9 @@ void producteur(int indice)
 //fonction qui calcule la ponderation de chaque tache
 int calculate_task_weight(int indice)
 {
-    int weight_task = 10;
-    my_waiting_tasks[indice].weight = 10;
+    // on boucle tant qu'un autre thread a la semaphore
+    while(semaphore_task > 0);
+    test();
     
     return 0;
 }
