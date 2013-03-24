@@ -25,22 +25,6 @@ struct my_task
   struct list_head new_task;
 };
 
-int nbre=0;
-
-// semaphore dans le cas ou on a plusieurs threads qui
-// appique une ponderation a chaque tache
-typedef struct 
-{
-   int nombre_of_waiting_task;
-   struct list_head wainting_tasks;
-}semaphore;
-
-//liste des threads en attente d'ecrire
-//ou de lire dans le ready queue dans le cas
-// ou on utilise plusieurs threads pour ponderer les taches
-// et peupler le ready queue
-LIST_HEAD(my_tasks);
-
 
 // thread d'essai
 static struct task_struct *my_thread;
@@ -51,8 +35,22 @@ static struct task_struct *my_thread2;
 * semaphore producteur-consommateur
  */
 
-// liste des taches pretes a etre executes
+//liste des threads choisi par le scheduler 
+//short-term pour etre execute en attente d'ecution 
+//LIST_HEAD(scheduler_short_term_tasks);
+
+
+// liste des taches dans le ready queue
+struct scheduler_task_list
+{
+  struct my_task scheduler_task;
+  struct list_head head_scheduler_task;
+};
+// on initialise une liste qui va contenir
+// la liste des taches du scheduler-short-term
+
 LIST_HEAD(ready_queue_tasks);
+
 // semaphore pour gerer la l,ajout d'une tache dans le ready queue par le scheduler
 // long-term et la lecture et la suppression de la tache
 // dans le ready queue par le scheduler-short-term 
@@ -63,8 +61,9 @@ struct semaphore empty = __SEMAPHORE_INITIALIZER(empty,BUFFER_SIZE);
 
 // semaphore pour gerer plusieurs producteurs qui veulent
 // ajouter une tache dans le reay queue. Ceci c'est dans le cas
-// ou on a plus de 100000 taches
+// ou on a plus de 1000 taches
 struct semaphore semaphore_task = __SEMAPHORE_INITIALIZER(semaphore_task,0);
+
 
 
 //Tableau contenant toute les tâches,
@@ -102,7 +101,8 @@ int get_random_fibonacci(int mod)
 //ainsi que son appel dans le chargement
 // de module.
 int init(struct my_task* ptasks)
-{
+{	
+
 	//Ne pas modifier cette fonction
 	unsigned int i;
 	for (i = 0; i<NB_TASK; ++i)
@@ -110,7 +110,20 @@ int init(struct my_task* ptasks)
 		ptasks[i].priority = get_random_fibonacci(MAX_PRIORITY_LEVEL);
 		ptasks[i].nb_required_memory_blocks = get_random_fibonacci(NB_MEMORY_BLOCKS);
 		ptasks[i].estimated_exec_time = get_random_fibonacci(MAX_TASK_EXECUTION_TIME);
-		
+
+		// on cree un head contenant la tache pour essai
+		struct scheduler_task_list new_task = {			
+			.scheduler_task= ptasks[i],
+  			.head_scheduler_task = LIST_HEAD_INIT(new_task.head_scheduler_task)
+		};		
+		list_add(&new_task.head_scheduler_task ,&ready_queue_tasks);
+		struct list_head *p=NULL;
+		struct scheduler_task_list *t=NULL;
+		list_for_each(p,&ready_queue_tasks){
+			t = list_entry(p, struct scheduler_task_list, head_scheduler_task);
+			printk("ready task priority %d\n", t->scheduler_task.priority); 
+		}
+		printk("tache %d avec priorite %d", i, new_task.scheduler_task.priority);
 		
 	}                 
 
@@ -121,8 +134,7 @@ int init(struct my_task* ptasks)
 // apres avoir calcule la ponderation
 //indice : indice de la tache dans my_waiting_task
 void producteur(int indice)
-{
-  
+{  
 	// modifie le weight de la tache 
 	//calculate_task_weight(indice);
 	 down(&empty);
@@ -132,17 +144,15 @@ void producteur(int indice)
 	 //add_task_on_ready_queue(my_waiting_task[indice]);
 	 up(&mutex);
 	 up(&full);
-	
-   
 }
 
 //fonction qui calcule la ponderation de chaque tache
 int calculate_task_weight(int indice)
-{
-    // on boucle tant qu'un autre thread a la semaphore
-    while(semaphore_task > 0);
-    test();
-    
+{	 int nbre=1;
+     up(&semaphore_task);
+    // le thread entre dans sa section critique
+    printk("Je suis dans ma section critique %d\n", nbre++);
+    down(&semaphore_task);   
     return 0;
 }
 
@@ -150,7 +160,6 @@ int calculate_task_weight(int indice)
 int add_task_on_ready_queue(struct my_task new_task )
 {
      list_add(&new_task, &ready_queue_tasks);
-
 	return 0;
 }
 
@@ -177,8 +186,6 @@ void consommateur()
 	//remove_task_from_ready_queue();
 	up(&mutex);
 	up(&empty);
-	
-  
 }
 
 int test_me(char *c){	
@@ -189,34 +196,21 @@ int test_me(char *c){
 	return 0;
 }
 
+//fonction choisi les taches dont la somme dans le ready queue et ajoute la tache dans la
+// liste des taches du scheduler-sort-term
+int add_task_to_scheduler_list()
+{
+  int i=0;
+  int numbre_of_thread_in_ready_queue = 4;
+  // On limite la taille de la liste du scheduler
+  // short-term a 10 
+  
+  while( (i<10) || (i< numbre_of_thread_in_ready_queue)) 
+  {
+      //list_add(&new_task, &scheduler_short_term_tasks);
+  }
+}
 
-
-/* fontion pour aquerir et relacher la semaphore
-    void acquire_semaphore (semaphore *S, task_struct &new_thread)            
-    {
-      disable_interrupts ();
-      up(&my_semaphore);
-      if (S.number_of_waiting_threads < 0){ 
-	//ajoute le thread qui veut acceder au ready queue
-	// a la liste des taches d'ecrire dans le ready queue
-	list_add(&new_thread, &S.waiting_tasks);                                
-      	enable_interrupts ();
-
-    }
-
-   void release_semaphore (semaphore *S)        
-    {
-      disable_interrupts ();
-      S.number_of_waiting_threads++;
-
-      if (S.number_of_waiting_threads <= 0)
-        {
-      	//enleve le thread de la liste des threads en attente
-	list_remove(&new_thread, &S.waiting_tasks);
-        }                                                
-      enable_interrupts ();
-    }
-*/
 
 
 //Variable contenant le temps depuis la fin
@@ -281,15 +275,16 @@ int simple_init(void)
 	//Tasks initialisation. Ne pas modifier.
 	init(my_waiting_tasks);
 	do_gettimeofday(&nano0);
-
+	
+	//printk("priorite de la tache ds le ready queue %d ", list_first_entry(ready_queue_tasks, struct scheduler_task_list, 
 	/* code ajoute */
 		my_waiting_tasks[0].weight = 0;
 		list_add(&(my_waiting_tasks[0]), &ready_queue_tasks);
 
 	char our_thread[8] = "my_thread";
-	 my_thread = kthread_create (producteur, NULL, our_thread);
+	 my_thread = kthread_create (calculate_task_weight, NULL, our_thread);
 	char our_thread2[8] = "my_thread2";
- 	my_thread2 = kthread_create (consommateur, NULL, our_thread2);
+ 	my_thread2 = kthread_create (calculate_task_weight, NULL, our_thread2);
          if((my_thread)){
 		printk(KERN_INFO "thread producteur ");		
 		wake_up_process(my_thread);
