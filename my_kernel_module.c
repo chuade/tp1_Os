@@ -13,6 +13,7 @@
 #include <linux/random.h>
 #include <my_kernel_module.h>
 
+
 //Structure de tache
 //Laisser au minimum les informations 
 //de base
@@ -30,10 +31,30 @@ struct my_task
 static struct task_struct *my_thread;
 static struct task_struct *my_thread2;
 
+// structure pour gerer le memory manager
+struct task_in_memory
+{
+   struct my_task my_task_in_memory;
+   struct list_head head_memory_task;
+   int last_use_memory_block; // dernier index ou commence la memoire disponible
+   int rest_of_memory_blocks;
+   // index du debut d'ecriture dans la memoire
+   // chaque tache garde cet index
+   int started_index_in_memory; 
+}tasks;
+// liste des taches en memoires
+LIST_HEAD(list_of_task_in_memory);
 
-/* initilisation des variables pour la 
-* semaphore producteur-consommateur
- */
+//structure pour gerer le memory manager
+struct partition_memory 
+{
+    int debut;
+    int fin;
+    int taille;
+    int isfree; // dit si la partition est libre ou occupee
+    struct list_head head_partition_memory;
+};
+LIST_HEAD(partition_memory_list);
 
 //liste des threads choisi par le scheduler 
 //short-term pour etre execute en attente d'ecution 
@@ -48,8 +69,11 @@ struct scheduler_task_list
 };
 // on initialise une liste qui va contenir
 // la liste des taches du scheduler-short-term
-
 LIST_HEAD(ready_queue_tasks);
+
+//structure du memory manager pour garder une trace des taches
+// en memoire et un pointeur du dernier block memoire utilise
+
 
 // semaphore pour gerer la l,ajout d'une tache dans le ready queue par le scheduler
 // long-term et la lecture et la suppression de la tache
@@ -72,7 +96,7 @@ struct semaphore semaphore_task = __SEMAPHORE_INITIALIZER(semaphore_task,0);
 //de traitement pour une tâche.
 //(Vous pourrez ensuite les copier dans une
 //structure de donnée de votre choix si nécessaire)
-#define NB_TASK 1
+#define NB_TASK 10
 struct my_task my_waiting_tasks[NB_TASK];
 
 //Les blocs mémoire utilisés et/ou non
@@ -102,30 +126,15 @@ int get_random_fibonacci(int mod)
 // de module.
 int init(struct my_task* ptasks)
 {	
-
 	//Ne pas modifier cette fonction
 	unsigned int i;
 	for (i = 0; i<NB_TASK; ++i)
 	{
 		ptasks[i].priority = get_random_fibonacci(MAX_PRIORITY_LEVEL);
 		ptasks[i].nb_required_memory_blocks = get_random_fibonacci(NB_MEMORY_BLOCKS);
-		ptasks[i].estimated_exec_time = get_random_fibonacci(MAX_TASK_EXECUTION_TIME);
-
-		// on cree un head contenant la tache pour essai
-		struct scheduler_task_list new_task = {			
-			.scheduler_task= ptasks[i],
-  			.head_scheduler_task = LIST_HEAD_INIT(new_task.head_scheduler_task)
-		};		
-		list_add(&new_task.head_scheduler_task ,&ready_queue_tasks);
-		struct list_head *p=NULL;
-		struct scheduler_task_list *t=NULL;
-		list_for_each(p,&ready_queue_tasks){
-			t = list_entry(p, struct scheduler_task_list, head_scheduler_task);
-			printk("ready task priority %d\n", t->scheduler_task.priority); 
-		}
-		printk("tache %d avec priorite %d", i, new_task.scheduler_task.priority);
-		
-	}                 
+		ptasks[i].estimated_exec_time = get_random_fibonacci(MAX_TASK_EXECUTION_TIME);		
+	}   
+		             
 
 	return 0;
 }
@@ -195,22 +204,84 @@ int test_me(char *c){
 	printk("produce %s!!\n ",c);
 	return 0;
 }
-
-//fonction choisi les taches dont la somme dans le ready queue et ajoute la tache dans la
-// liste des taches du scheduler-sort-term
-int add_task_to_scheduler_list()
+//Verifie s'il ya de la memoire disponible
+// fonction du nombre de block de la ou des taches
+// ajoute les tache dans la liste des taches qui vont etre ex
+int verify_memory_block()
 {
-  int i=0;
-  int numbre_of_thread_in_ready_queue = 4;
-  // On limite la taille de la liste du scheduler
-  // short-term a 10 
-  
-  while( (i<10) || (i< numbre_of_thread_in_ready_queue)) 
-  {
-      //list_add(&new_task, &scheduler_short_term_tasks);
-  }
+	//on limite le nombre de taches dans la liste du scheduler-short term a 5
+	//On prend maximum 5 taches dans le ready queue pour les mettre dans
+	// le short-term list s'il ya assez de memoire disponible
+	unsigned int i=0;
+        struct list_head *p=NULL;
+	struct scheduler_task_list *datastr;
+	struct task_in_memory *new_task ;
+
+	printk("memoire disponible : %d\n", tasks.rest_of_memory_blocks);
+	list_for_each_entry( datastr, &ready_queue_tasks, head_scheduler_task)
+	{
+	    if((i<5) && (datastr->scheduler_task.nb_required_memory_blocks < tasks.rest_of_memory_blocks))
+	    {
+		new_task = (struct task_in_memory *)
+		    kmalloc(sizeof(struct task_in_memory), GFP_KERNEL);
+		new_task->my_task_in_memory = datastr->scheduler_task;
+		printk("tache dans la memoire %d et son nombre de blocks %d\n", i, new_task->my_task_in_memory.nb_required_memory_blocks);
+		
+	   	list_add(&new_task->head_memory_task ,&list_of_task_in_memory);
+		tasks.rest_of_memory_blocks -= new_task->my_task_in_memory.nb_required_memory_blocks; 
+	    }
+	    else	
+	 	break;
+	   i++;
+	}
+	struct task_in_memory *t;
+	list_for_each_entry( t, &list_of_task_in_memory, head_memory_task){
+		printk("nombre de block de chaque tache dans la memoire %d\n", t->my_task_in_memory.nb_required_memory_blocks ); 
+	    }
+	printk("\n\n");
+   return 0;
 }
 
+//Fonction qui met a jour la table de partition de la memoire
+void update_memory_partition()
+{
+   int i=0, j=0, k=0;
+   // previous_free dit si la partion precedente est libre
+   bool previous_free = false, creerStruct=false;
+   struct  partition_memory *p;
+   list_for_each_entry(p, &partition_memory_list, head_partition_memory)
+      {
+	if(p->isfree)
+	  {
+	     if(previous_free)
+		{
+		    j = p->fin;
+		     creerStruct = true;
+		}
+	     else
+		{
+		   i = p->debut; 
+		   j = p->fin;
+		   creerStruct = true;
+		   previous_free = true;
+		}
+	  }
+	  else if(creerStruct)
+		{
+		   //on cree une structure pour joindre
+		   // les partitions libres et successives
+		   //et on ajoute dans une nouvelle liste de partition
+		}
+		else
+		    {
+			i = 0;
+			j = 0;
+			creerStruct = false;
+		    }
+      }
+	// On retourne la nouvelle liste de partition ou on remplace
+        //l'ancienne liste par la nouvelle
+}
 
 
 //Variable contenant le temps depuis la fin
@@ -228,10 +299,6 @@ int simulate_task_thread_function(struct my_task *ptask,int *mem_addr)
 	{
 		mem_addr[i]=current_task->pid;
 	}
-
-	// Code ajoute/
-
-	
 
 	//Ne pas modifier directement cette fonction
 	struct timeval nano1;
@@ -255,19 +322,11 @@ int simulate_task_thread_function(struct my_task *ptask,int *mem_addr)
 	return 0;
 }
 
-int test(){	
-	int weight_tasks;
-	weight_tasks = (my_waiting_tasks[0].priority*0.8) + (my_waiting_tasks[0].nb_required_memory_blocks*0.15) + (my_waiting_tasks[0].estimated_exec_time*0.05); 
-	
-	printk("This is my weight %d !!\n ", my_waiting_tasks[0].priority);
-	return 0;
-}
-
 
 /* Cette fonction est appelee lors du chargement du module */
 int simple_init(void)
 {
-	int i;
+	unsigned int i;
 
 	//Print into the kernel log file
         printk(KERN_INFO "Loading Module\n");
@@ -275,11 +334,56 @@ int simple_init(void)
 	//Tasks initialisation. Ne pas modifier.
 	init(my_waiting_tasks);
 	do_gettimeofday(&nano0);
+
+	//declarations des taches dans le memory manager
+	struct task_in_memory  my_memory_task;
+	//initialisation de la liste des partitons de la memoire
+	struct partition_memory *partition;
+	partition = (struct partition_memory *)
+		    kmalloc(sizeof(struct partition_memory), GFP_KERNEL);
+		 partition->debut=0;
+		 partition->fin=10;
+		 partition->taille = 10;
+		 partition->isfree = 1;
+		INIT_LIST_HEAD(&partition->head_partition_memory);
+	list_add(&partition->head_partition_memory, &partition_memory_list);	
+ 
 	
-	//printk("priorite de la tache ds le ready queue %d ", list_first_entry(ready_queue_tasks, struct scheduler_task_list, 
-	/* code ajoute */
-		my_waiting_tasks[0].weight = 0;
-		list_add(&(my_waiting_tasks[0]), &ready_queue_tasks);
+	// tache de test pr le scheduler-short term
+	//INIT_LIST_HEAD(&ready_queue_tasks.head_scheduler_task);
+	// On prend quelque taches dans my_waiting_task pour
+	// simuler le memory manager
+	struct list_head *p=NULL;
+	struct scheduler_task_list *datastr;
+	struct scheduler_task_list *new_task ;
+	for (i = 0; i<NB_TASK - 4; ++i)
+	{	  
+		new_task = (struct scheduler_task_list *)
+		    kmalloc(sizeof(struct scheduler_task_list), GFP_KERNEL);		
+		new_task->scheduler_task = my_waiting_tasks[i];
+		INIT_LIST_HEAD(&new_task->head_scheduler_task);
+		printk("tache %d avec priorite %d\n", i, new_task->scheduler_task.priority);
+		
+	   list_add(&new_task->head_scheduler_task ,&ready_queue_tasks);		
+	   
+	   
+	}
+	if(list_empty(&ready_queue_tasks))
+	  printk("ya rien");
+	else{
+	   printk("nombre de tache ds ready queue %d\n", list_empty(&ready_queue_tasks));
+	}
+	list_for_each_entry( datastr, &ready_queue_tasks, head_scheduler_task){
+		printk("ready task priority %d\n", datastr->scheduler_task.nb_required_memory_blocks); 
+	    }
+
+	// On initialise le nombre de block du memory manager a 10
+	tasks.rest_of_memory_blocks = 10;
+	
+	//On peuple la liste des taches du memory manager pour test
+	// en ajoutant une tache a la liste seulement si on ne depasse pas le
+	//nombre de bloc disponible en memoire
+	verify_memory_block();
 
 	char our_thread[8] = "my_thread";
 	 my_thread = kthread_create (calculate_task_weight, NULL, our_thread);
@@ -296,7 +400,7 @@ int simple_init(void)
 		printk("\n");
 	} 
 	 
-
+	
 	/* Fin du code ajoute */     
 
 	//Task execution simulation
