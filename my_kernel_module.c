@@ -245,10 +245,53 @@ int verify_memory_block()
 //Fonction qui met a jour la table de partition de la memoire
 void update_memory_partition()
 {
+	LIST_HEAD(temporary_list);
+	//structure de test
+	 struct partition_memory *new_task1, *new_task2, *new_task3, *new_task4, *new_task5;
+		   new_task1 = (struct partition_memory *)
+		    kmalloc(sizeof(struct partition_memory), GFP_KERNEL);		
+		new_task1->debut = 0;
+		new_task1->fin = 2;
+		new_task1->isfree = true;
+		
+
+	 
+		   new_task2 = (struct partition_memory *)
+		    kmalloc(sizeof(struct partition_memory), GFP_KERNEL);		
+		new_task2->debut = 3;
+		new_task2->fin = 6;
+		new_task2->isfree = false;
+		
+
+		   new_task3 = (struct partition_memory *)
+		    kmalloc(sizeof(struct partition_memory), GFP_KERNEL);		 	
+		new_task3->debut = 7;
+		new_task3->fin = 10;
+		new_task3->isfree = true;
+
+		 new_task4 = (struct partition_memory *)
+		    kmalloc(sizeof(struct partition_memory), GFP_KERNEL);		 	
+		new_task4->debut = 11;
+		new_task4->fin = 13;
+		new_task4->isfree = true;
+
+		 new_task5 = (struct partition_memory *)
+		    kmalloc(sizeof(struct partition_memory), GFP_KERNEL);		 	
+		new_task5->debut = 14;
+		new_task5->fin = 17;
+		new_task5->isfree = false;
+		
+		list_add(&new_task5->head_partition_memory, &partition_memory_list);
+		list_add(&new_task4->head_partition_memory, &partition_memory_list);
+		list_add(&new_task3->head_partition_memory, &partition_memory_list);
+		list_add(&new_task2->head_partition_memory, &partition_memory_list);
+		list_add(&new_task1->head_partition_memory, &partition_memory_list);
+
    int i=0, j=0, k=0;
    // previous_free dit si la partion precedente est libre
    bool previous_free = false, creerStruct=false;
    struct  partition_memory *p;
+   
    list_for_each_entry(p, &partition_memory_list, head_partition_memory)
       {
 	if(p->isfree)
@@ -257,6 +300,7 @@ void update_memory_partition()
 		{
 		    j = p->fin;
 		     creerStruct = true;
+			
 		}
 	     else
 		{
@@ -265,12 +309,22 @@ void update_memory_partition()
 		   creerStruct = true;
 		   previous_free = true;
 		}
+	//printk("tache dans la partition de la memoire %d\n", p->isfree);
 	  }
 	  else if(creerStruct)
 		{
+		  printk("Je ne suis pas vide %d\n", p->isfree);
 		   //on cree une structure pour joindre
 		   // les partitions libres et successives
 		   //et on ajoute dans une nouvelle liste de partition
+		   struct partition_memory *new_task;
+		   new_task = (struct partition_memory *)
+		    kmalloc(sizeof(struct partition_memory), GFP_KERNEL);		
+		new_task->debut = i;
+		new_task->fin = j;
+		new_task->isfree = true;
+		list_add(&new_task->head_partition_memory, &temporary_list);
+		previous_free = false;
 		}
 		else
 		    {
@@ -281,6 +335,12 @@ void update_memory_partition()
       }
 	// On retourne la nouvelle liste de partition ou on remplace
         //l'ancienne liste par la nouvelle
+	// on desalloue la memoire pour partition_memory_list
+	//  partition_memory_list = temporary_list ; a verifier
+	struct partition_memory *t;
+	list_for_each_entry( t, &temporary_list, head_partition_memory){
+		printk("nouvelle liste de partition debut = %d  et fin = %d\n",t->debut, t->fin); 
+	    }
 }
 
 
@@ -339,7 +399,7 @@ int simple_init(void)
 	struct task_in_memory  my_memory_task;
 	//initialisation de la liste des partitons de la memoire
 	struct partition_memory *partition;
-	partition = (struct partition_memory *)
+	/*partition = (struct partition_memory *)
 		    kmalloc(sizeof(struct partition_memory), GFP_KERNEL);
 		 partition->debut=0;
 		 partition->fin=10;
@@ -347,7 +407,7 @@ int simple_init(void)
 		 partition->isfree = 1;
 		INIT_LIST_HEAD(&partition->head_partition_memory);
 	list_add(&partition->head_partition_memory, &partition_memory_list);	
- 
+ 	*/
 	
 	// tache de test pr le scheduler-short term
 	//INIT_LIST_HEAD(&ready_queue_tasks.head_scheduler_task);
@@ -399,7 +459,7 @@ int simple_init(void)
 		wake_up_process(my_thread2);
 		printk("\n");
 	} 
-	 
+	 update_memory_partition();
 	
 	/* Fin du code ajoute */     
 
