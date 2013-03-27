@@ -140,6 +140,7 @@ int init(struct my_task* ptasks)
 		ptasks[i].priority = get_random_fibonacci(MAX_PRIORITY_LEVEL);
 		ptasks[i].nb_required_memory_blocks = get_random_fibonacci(NB_MEMORY_BLOCKS);
 		ptasks[i].estimated_exec_time = get_random_fibonacci(MAX_TASK_EXECUTION_TIME);
+		ptasks[i].weight = get_random_fibonacci(NB_MEMORY_BLOCKS);
 	}
 
 
@@ -187,11 +188,12 @@ void consommateur()
     int i;
     // on considere pr le moment que le thread scheduler
     // short term prend une seule tache ds le ready queue
-
+    verify_memory_block();
 	down(&full);
 	down(&mutex);
-	char car = 'c';
-	test_me(&car);
+	// entre dans sa section crituque car il partage le ready queue avec le scheduler long-term
+	// va chercher les taches dans le ready queue puis met a jour le ready queue
+
 	// on enleve la tache du ready queue
 	//remove_task_from_ready_queue();
 	up(&mutex);
@@ -218,32 +220,40 @@ int verify_memory_block()
     struct list_head *p=NULL;
 	struct ready_tasks *datastr;
 	struct task_in_short_term *new_task ;
-
+    struct my_task pt;
 	printk("memoire disponible : %d\n", free_space);
 	list_for_each_entry( datastr, &ready_queue_tasks, head_scheduler_task)
 	{
+        printk("nombre de block de chaque tache ds l'ancien ready queue %d\n", datastr->scheduler_task.nb_required_memory_blocks);
 	    if((i<5) && (datastr->scheduler_task.nb_required_memory_blocks <= free_space))
 	    {
 		new_task = (struct task_in_short_term *)
 		    kmalloc(sizeof(struct task_in_short_term), GFP_KERNEL);
 		new_task->my_task_in_short_term = datastr->scheduler_task;
-		printk("tache dans le short-term %d et son nombre de blocks %d\n", i, new_task->my_task_in_short_term.nb_required_memory_blocks);
+		//printk("tache dans le short-term %d et son nombre de blocks %d\n", i, new_task->my_task_in_short_term.nb_required_memory_blocks);
 
-	   	list_add(&new_task->head_memory_task ,&list_of_task_in_short_term);
+	   	//on enleve la tache dans le ready queue et on la met
+	   	//dans la liste des taches du scheduler-hort-term
+	   	list_move(&new_task->head_memory_task ,&list_of_task_in_short_term);
 		free_space -= new_task->my_task_in_short_term.nb_required_memory_blocks;
 	    }
-	    else
-            break;
 	   i++;
 	}
+
 	struct task_in_short_term *t;
+	struct ready_tasks *t1;
 	list_for_each_entry( t, &list_of_task_in_short_term, head_memory_task){
 		printk("nombre de block de chaque tache dans le short-term list %d\n", t->my_task_in_short_term.nb_required_memory_blocks );
 	    }
 	printk("\n\n");
 
+	list_for_each_entry( t1, &ready_queue_tasks, head_scheduler_task){
+		printk("nombre de block de chaque tache dans le new ready queue %d\n", t1->scheduler_task.nb_required_memory_blocks );
+	    }
+
 	//mise a jour de nombre de blocks libre dans le momory manager
 	my_memory_manager.free_space = free_space;
+
    return 0;
 }
 
@@ -303,29 +313,72 @@ int attribute_memory_address()
 //Fonction pour trier la liste des taches dans le ready queue
 // trier revient a interchanger les valeurs des eleemnts
 //de la structure sans toucher au noeud de la liste
-int insert_task_in_ready_queue(struct my_task *r_task)
+/*
+int insert_task_in_ready_queue()
 {
-
-    struct ready_tasks *task;
+    //struct my_task r_task = my_waiting_tasks[0] ;
+    //printk("tacgeeeeeeeeeeeegegeggggggggg%d\n\n", r_task.nb_required_memory_blocks);
+    struct ready_tasks *task, *task1;
     int k =0;
     bool hasInsert = true;
     //On cree une structure pour la nouvelle tache a inserer
     struct ready_tasks *new_task;
             new_task = (struct ready_tasks*)
 		    kmalloc(sizeof(struct ready_tasks), GFP_KERNEL);
-		    new_task->scheduler_task = r_task;
+		    new_task->scheduler_task = my_waiting_tasks[0] ;
 
     list_for_each_entry(task, &ready_queue_tasks, head_scheduler_task){
-       if((task->scheduler_task.weight < my_task->weight) && (hasInsert))
+        printk("ready queue task weight = %d  new task weight = %d\n",task->scheduler_task.weight,new_task->scheduler_task.weight);
+       if((task->scheduler_task.weight < new_task->scheduler_task.weight) && (hasInsert))
         {
             LIST_HEAD(tmp);
-            list_cut_position(tmp, ready_queue_tasks, task.head_scheduler_task);
+            //list_cut_position(&tmp, &ready_queue_tasks, &task->head_scheduler_task);
             hasInsert = false;
+           /* list_for_each_entry(task1, &tmp, head_scheduler_task)
+            {
+                printk("nombre de block de chaque tache coupee est \n", task1->scheduler_task.nb_required_memory_blocks);
+            }
+
         }
 
-		printk("nombre de blocks de la tache minimum %d\n",);
 	    }
     return 0;
+}
+*/
+
+// Fonction qui ajoute une tache te trie la iste
+int add_and_sort()
+{
+    struct ready_tasks *task, *task1, *task3;
+    int k =0;
+    bool hasInsert = true;
+    //On cree une structure pour la nouvelle tache a inserer
+    struct ready_tasks *new_task;
+    struct my_task tmp, first_task;
+            new_task = (struct ready_tasks*)
+		    kmalloc(sizeof(struct ready_tasks), GFP_KERNEL);
+		    new_task->scheduler_task = my_waiting_tasks[0] ;
+    //on ajoute la nouvelle tache dans le ready queue
+    list_add(&new_task->head_scheduler_task, &ready_queue_tasks);
+
+        list_for_each_entry(task, &ready_queue_tasks, head_scheduler_task)
+        {
+            list_for_each_entry(task1, &ready_queue_tasks, head_scheduler_task)
+            {
+                 if(task->scheduler_task.weight < task1->scheduler_task.weight)
+                 {
+                    //printk("valeur avant changememnt tmp weight = %d et task weight = %d\n", task->scheduler_task.weight, task1->scheduler_task.weight);
+                     tmp = task->scheduler_task;
+                     task->scheduler_task = task1->scheduler_task;
+                     task1->scheduler_task = tmp;
+                     //printk("valeur apres changememnt tmp weight = %d et task weight = %d\n\n", task->scheduler_task.weight, task1->scheduler_task.weight);
+                 }
+            }
+        }
+          list_for_each_entry(task, &ready_queue_tasks, head_scheduler_task)
+          {
+            printk("valeur par ordre croissant de poids %d\n", task->scheduler_task.weight);
+          }
 }
 
 
@@ -512,8 +565,7 @@ int simple_init(void)
 		new_task = (struct ready_tasks *)
 		    kmalloc(sizeof(struct ready_tasks), GFP_KERNEL);
 		new_task->scheduler_task = my_waiting_tasks[i];
-		INIT_LIST_HEAD(&new_task->head_scheduler_task);
-		printk("tache %d avec priorite %d\n", i, new_task->scheduler_task.priority);
+		printk("tache %d dans le ready queue avec nbre de block =  %d\n", i, new_task->scheduler_task.nb_required_memory_blocks);
 
 	   list_add(&new_task->head_scheduler_task ,&ready_queue_tasks);
 
@@ -532,9 +584,11 @@ int simple_init(void)
 
 	char our_thread[8] = "my_thread";
 	 my_thread = kthread_create (calculate_task_weight, NULL, our_thread);
+	 wake_up_process(my_thread);
 	char our_thread2[8] = "my_thread2";
  	my_thread2 = kthread_create (calculate_task_weight, NULL, our_thread2);
-         if((my_thread)){
+
+        if((my_thread)){
 		printk(KERN_INFO "thread producteur ");
 		wake_up_process(my_thread);
 		printk("\n");
@@ -546,6 +600,7 @@ int simple_init(void)
 	}
 	 update_memory_partition();
     attribute_memory_address();
+     add_and_sort();
 	/* Fin du code ajoute */
 
 	//Task execution simulation
